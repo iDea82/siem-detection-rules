@@ -1,0 +1,94 @@
+// ============================================================
+// DETECTION RULE: Suspicious PowerShell Execution
+// MITRE ATT&CK: T1059.001 - Command and Scripting Interpreter: PowerShell
+// TACTIC: Execution (TA0002)
+// PLATFORM: Microsoft Sentinel (Sysmon via MMA or AMA agent)
+// SEVERITY: High
+//
+// DESCRIPTION:
+// Detects PowerShell execution containing flags and patterns
+// commonly used in malicious activity — encoded commands,
+// download cradles, AMSI bypass attempts, execution policy
+// bypasses, and known credential dumping tool signatures.
+//
+// KNOWN FALSE POSITIVES:
+// - Software deployment tools using encoded commands
+// - Security scanning tools
+// - Recommend whitelisting known admin scripts by hash
+//
+// RESPONSE:
+// - Capture full command line for analysis
+// - Identify parent process — how was PowerShell launched?
+// - Check network connections from the PowerShell process
+// - Review files created or modified during execution
+// - Escalate to Tier 2 if encoded payload or download cradle confirmed
+// ============================================================
+
+let SuspiciousPatterns = dynamic([
+    "-enc", "-encoded", "-encodedcommand",
+    "iex", "invoke-expression",
+    "downloadstring", "downloadfile", "webclient",
+    "wget", "curl", "invoke-webrequest",
+    "bypass", "executionpolicy",
+    "amsibypass", "amsi.context", "amsiutils",
+    "mimikatz", "sekurlsa", "lsadump",
+    "-nop", "-noprofile", "-noninteractive",
+    "-windowstyle hidden"
+]);
+
+Sysmon
+| where TimeGenerated >= ago(1d)
+| where EventID == 1
+| where tolower(Image) endswith "powershell.exe"
+    or tolower(Image) endswith "pwsh.exe"
+| extend cmdline = tolower(CommandLine)
+| extend SuspiciousFlag = case(
+    cmdline contains "-enc" or
+    cmdline contains "-encoded" or
+    cmdline contains "-encodedcommand",
+        "Encoded Command — hides script content from logs",
+    cmdline contains "iex" or
+    cmdline contains "invoke-expression",
+        "Invoke-Expression — executes strings as commands",
+    cmdline contains "downloadstring" or
+    cmdline contains "downloadfile" or
+    cmdline contains "webclient" or
+    cmdline contains "wget" or
+    cmdline contains "curl" or
+    cmdline contains "invoke-webrequest",
+        "Download Cradle — pulling content from internet",
+    cmdline contains "bypass" or
+    cmdline contains "executionpolicy",
+        "Execution Policy Bypass — circumventing script restrictions",
+    cmdline contains "amsibypass" or
+    cmdline contains "amsi.context" or
+    cmdline contains "amsiutils",
+        "AMSI Bypass — attempting to disable antimalware scanning",
+    cmdline contains "mimikatz" or
+    cmdline contains "sekurlsa" or
+    cmdline contains "lsadump",
+        "Credential Dumping Tool — attempting to steal credentials",
+    cmdline contains "-nop" or
+    cmdline contains "-noprofile" or
+    cmdline contains "-noninteractive" or
+    cmdline contains "-windowstyle hidden",
+        "Evasion Flags — hiding execution from user",
+    dynamic(null)
+)
+| where isnotempty(SuspiciousFlag)
+| extend Severity = "HIGH"
+| extend MitreTechnique = "T1059.001 - PowerShell"
+| extend Tactic = "Execution"
+| project
+    TimeGenerated,
+    Computer,
+    UserName,
+    Image,
+    CommandLine,
+    ParentImage,
+    ParentCommandLine,
+    SuspiciousFlag,
+    Severity,
+    MitreTechnique,
+    Tactic
+| sort by TimeGenerated desc

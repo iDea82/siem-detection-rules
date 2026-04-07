@@ -1,0 +1,82 @@
+// ============================================================
+// DETECTION RULE: Large Outbound Data Transfer — Potential Exfiltration
+// MITRE ATT&CK: T1048 - Exfiltration Over Alternative Protocol
+//               T1041 - Exfiltration Over C2 Channel
+// TACTIC: Exfiltration (TA0010)
+// PLATFORM: Microsoft Sentinel (CommonSecurityLog / AzureNetworkAnalytics)
+// SEVERITY: Medium — escalates to High if destination is unknown
+//
+// DESCRIPTION:
+// Detects unusually large volumes of outbound network traffic
+// from a single internal host within a 1-hour window.
+// Threshold of 500MB tuned for typical enterprise environment.
+// Adjust based on your organization's normal traffic patterns.
+//
+// KNOWN FALSE POSITIVES:
+// - Scheduled backup jobs to offsite storage
+// - Software update servers pushing large packages
+// - Video conferencing systems uploading recordings
+// - Recommend baselining per host and whitelisting backup jobs
+//
+// RESPONSE:
+// - Identify destination IP and check against threat intel
+// - Determine what data the source host has access to
+// - Review files accessed or compressed before transfer
+// - Check if transfer occurred outside business hours
+// - Capture and preserve network traffic for forensic analysis
+// - If destination confirmed malicious: isolate source host immediately
+// ============================================================
+
+let ThresholdMB = 500;
+let CriticalThresholdMB = 2000;
+let HighThresholdMB = 1000;
+let LookbackPeriod = 1h;
+
+CommonSecurityLog
+| where TimeGenerated >= ago(1d)
+| where CommunicationDirection == "Outbound"
+    or DeviceAction !in ("deny", "block", "drop")
+| extend BytesOutMB = SentBytes / 1024 / 1024
+| summarize
+    TotalMBTransferred = sum(BytesOutMB),
+    DestinationIPs = make_set(DestinationIP),
+    DestinationPorts = make_set(DestinationPort),
+    Applications = make_set(ApplicationProtocol),
+    UniqueDestinations = dcount(DestinationIP),
+    ConnectionCount = count(),
+    WindowStart = min(TimeGenerated),
+    WindowEnd = max(TimeGenerated)
+    by bin(TimeGenerated, LookbackPeriod), SourceIP, SourceHostName
+| where TotalMBTransferred >= ThresholdMB
+| extend Severity = case(
+    TotalMBTransferred >= CriticalThresholdMB, "CRITICAL",
+    TotalMBTransferred >= HighThresholdMB,     "HIGH",
+    TotalMBTransferred >= ThresholdMB,         "MEDIUM",
+    "LOW"
+)
+| extend MitreTechnique = "T1048 / T1041 - Exfiltration"
+| extend Tactic = "Exfiltration"
+| extend InvestigationPriority = case(
+    UniqueDestinations == 1 and TotalMBTransferred >= HighThresholdMB,
+        "PRIORITY 1 — Large transfer to single destination",
+    UniqueDestinations <= 3 and TotalMBTransferred >= ThresholdMB,
+        "PRIORITY 2 — Large transfer to few destinations",
+    "PRIORITY 3 — Review required"
+)
+| project
+    TimeGenerated,
+    SourceHostName,
+    SourceIP,
+    TotalMBTransferred,
+    DestinationIPs,
+    DestinationPorts,
+    Applications,
+    UniqueDestinations,
+    ConnectionCount,
+    WindowStart,
+    WindowEnd,
+    Severity,
+    InvestigationPriority,
+    MitreTechnique,
+    Tactic
+| sort by TotalMBTransferred desc

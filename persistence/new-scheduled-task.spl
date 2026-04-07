@@ -1,0 +1,87 @@
+{/*
+DETECTION RULE: Suspicious Scheduled Task Creation
+MITRE ATT&CK: T1053.005 - Scheduled Task/Job: Scheduled Task
+TACTIC: Persistence (TA0003)
+              Privilege Escalation (TA0004)
+PLATFORM: Windows (Security Event ID 4698, Sysmon Event ID 1)
+SEVERITY: Medium — escalates to High if task runs from
+          suspicious path or contains encoded commands
+
+DESCRIPTION:
+Detects creation of scheduled tasks with characteristics
+commonly associated with malicious persistence — tasks
+running from temp directories, using encoded commands,
+running as SYSTEM, or created by unusual parent processes.
+
+Scheduled tasks are one of the most prevalent persistence
+mechanisms used by threat actors ranging from commodity
+malware to nation-state APT groups. Any scheduled task
+created outside of standard software deployment windows
+warrants investigation.
+
+KNOWN FALSE POSITIVES:
+- Software installation creating legitimate update tasks
+- System administration scripts creating maintenance tasks
+- Endpoint management tools like SCCM creating deployment tasks
+- Recommend maintaining an approved task whitelist
+
+RESPONSE:
+- Identify who created the task and from what process
+- Examine the full task action — what does it run?
+- Check the task's trigger — when does it run?
+- Determine if the task executable exists and examine it
+- Calculate file hash and check against threat intel
+- If malicious: delete task, isolate host, investigate scope
+*/}
+
+index=windows (sourcetype="WinEventLog:Security" EventCode=4698)
+    OR (sourcetype="XmlWinEventLog:Microsoft-Windows-Sysmon/Operational"
+        EventCode=1
+        (Image="*\\schtasks.exe" OR Image="*\\taskschd.msc"))
+| eval task_details=coalesce(TaskContent, CommandLine)
+| eval task_details_lower=lower(task_details)
+| eval suspicious_indicator=case(
+
+    match(task_details_lower, "\\temp\\|\\tmp\\|\\appdata\\local\\temp\\"),
+        "Suspicious Path — task runs from temp directory",
+
+    match(task_details_lower, "-enc|-encoded|-encodedcommand"),
+        "Encoded Command — task contains encoded payload",
+
+    match(task_details_lower, "powershell|pwsh|cmd\.exe|wscript|cscript|mshta|rundll32|regsvr32"),
+        "Script Interpreter — task uses scripting engine",
+
+    match(task_details_lower, "downloadstring|downloadfile|webclient|invoke-webrequest|curl|wget"),
+        "Download Cradle — task pulls content from internet",
+
+    match(task_details_lower, "system32\\tasks|syswow64"),
+        "System Task Path — task created in system directory",
+
+    match(task_details_lower, "onlogon|onidle|onboot|onevent"),
+        "Persistence Trigger — task runs on system events",
+
+    true(), null()
+)
+| where isnotnull(suspicious_indicator)
+| eval severity=case(
+    match(task_details_lower, "\\temp\\|\\tmp\\") AND
+    match(task_details_lower, "-enc|-encoded"),
+        "CRITICAL",
+    match(task_details_lower, "downloadstring|downloadfile|webclient"),
+        "HIGH",
+    true(), "MEDIUM"
+)
+| eval mitre_technique="T1053.005 - Scheduled Task"
+| eval tactic="Persistence / Privilege Escalation"
+| table
+    _time,
+    ComputerName,
+    user,
+    task_details,
+    suspicious_indicator,
+    ParentImage,
+    ParentCommandLine,
+    severity,
+    mitre_technique,
+    tactic
+| sort - _time

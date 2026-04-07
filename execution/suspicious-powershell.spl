@@ -1,0 +1,67 @@
+{/*
+DETECTION RULE: Suspicious PowerShell Execution
+MITRE ATT&CK: T1059.001 - Command and Scripting Interpreter: PowerShell
+TACTIC: Execution (TA0002)
+PLATFORM: Windows (Sysmon Event ID 1 - Process Creation)
+SEVERITY: High
+
+DESCRIPTION:
+Detects PowerShell execution containing flags and patterns
+commonly used in malicious activity — encoded commands,
+download cradles, AMSI bypass attempts, and execution
+policy bypasses. These patterns rarely appear in legitimate
+administrative scripts but are present in the vast majority
+of PowerShell-based attacks.
+
+KNOWN FALSE POSITIVES:
+- Some software deployment tools use encoded commands legitimately
+- Security scanning tools may trigger encoded command detection
+- Recommend whitelisting known administrative scripts by hash
+
+RESPONSE:
+- Capture full command line for analysis
+- Identify parent process — how was PowerShell launched?
+- Check network connections from the PowerShell process
+- Review what files were created or modified
+- Determine if this is an isolated event or part of a pattern
+- Escalate to Tier 2 if encoded payload or download cradle confirmed
+*/}
+
+index=windows sourcetype="XmlWinEventLog:Microsoft-Windows-Sysmon/Operational"
+EventCode=1
+Image="*\\powershell.exe" OR Image="*\\pwsh.exe"
+| eval cmdline=lower(CommandLine)
+| eval suspicious_flags=case(
+    match(cmdline, "-enc|-encoded|-encodedcommand"),
+        "Encoded Command — hides script content from logs",
+    match(cmdline, "iex|invoke-expression"),
+        "Invoke-Expression — executes strings as commands",
+    match(cmdline, "downloadstring|downloadfile|webclient|wget|curl|invoke-webrequest"),
+        "Download Cradle — pulling content from internet",
+    match(cmdline, "bypass|executionpolicy"),
+        "Execution Policy Bypass — circumventing script restrictions",
+    match(cmdline, "amsibypass|amsi.context|amsiutils"),
+        "AMSI Bypass — attempting to disable antimalware scanning",
+    match(cmdline, "mimikatz|sekurlsa|lsadump"),
+        "Credential Dumping Tool — attempting to steal credentials",
+    match(cmdline, "-nop|-noprofile|-noninteractive|-windowstyle hidden"),
+        "Evasion Flags — hiding execution from user",
+    true(), null()
+)
+| where isnotnull(suspicious_flags)
+| eval severity="HIGH"
+| eval mitre_technique="T1059.001 - PowerShell"
+| eval tactic="Execution"
+| table
+    _time,
+    ComputerName,
+    User,
+    Image,
+    CommandLine,
+    ParentImage,
+    ParentCommandLine,
+    suspicious_flags,
+    severity,
+    mitre_technique,
+    tactic
+| sort - _time

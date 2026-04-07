@@ -1,0 +1,48 @@
+// ============================================================
+// DETECTION RULE: Brute Force Login Attack
+// MITRE ATT&CK: T1110 - Brute Force
+// TACTIC: Credential Access (TA0006)
+// PLATFORM: Microsoft Sentinel (Windows Security Events)
+// SEVERITY: High
+//
+// DESCRIPTION:
+// Detects a high volume of failed login attempts from a single
+// account within a 5-minute window. Threshold of 10 failures
+// tuned to catch automated brute force tools while reducing
+// false positives from genuine user mistakes.
+//
+// RESPONSE:
+// - Identify source IP and determine if internal or external
+// - Check for successful logins from same source around same time
+// - If external: block source IP at perimeter firewall
+// - If internal: isolate endpoint and investigate for compromise
+// - Notify account owner and reset credentials
+// ============================================================
+
+SecurityEvent
+| where TimeGenerated >= ago(1d)
+| where EventID == 4625
+| where AccountType == "User"
+| summarize
+    FailedAttempts = count(),
+    SourceIPs = make_set(IpAddress),
+    TargetedHosts = make_set(Computer),
+    FirstAttempt = min(TimeGenerated),
+    LastAttempt = max(TimeGenerated)
+    by bin(TimeGenerated, 5m), Account
+| where FailedAttempts >= 10
+| extend Severity = "HIGH"
+| extend MitreTechnique = "T1110 - Brute Force"
+| extend Tactic = "Credential Access"
+| project
+    TimeGenerated,
+    Account,
+    FailedAttempts,
+    SourceIPs,
+    TargetedHosts,
+    FirstAttempt,
+    LastAttempt,
+    Severity,
+    MitreTechnique,
+    Tactic
+| sort by FailedAttempts desc

@@ -1,0 +1,83 @@
+{/*
+DETECTION RULE: Large Outbound Data Transfer — Potential Exfiltration
+MITRE ATT&CK: T1048 - Exfiltration Over Alternative Protocol
+              T1041 - Exfiltration Over C2 Channel
+TACTIC: Exfiltration (TA0010)
+PLATFORM: Network Firewall / Proxy Logs
+SEVERITY: Medium — escalates to High if destination is unknown
+
+DESCRIPTION:
+Detects unusually large volumes of outbound network traffic
+from a single internal host within a 1-hour window.
+Baseline threshold of 500MB is tuned for a typical enterprise
+environment — adjust based on your organization's normal
+traffic patterns.
+
+Covers two common exfiltration techniques:
+T1048 — using alternative protocols like FTP, DNS, or HTTPS
+to move data outside normal monitoring scope
+T1041 — using an existing C2 channel to funnel stolen data
+back to the attacker
+
+KNOWN FALSE POSITIVES:
+- Scheduled backup jobs to offsite storage
+- Software update servers pushing large packages
+- Video conferencing systems uploading recordings
+- Recommend baselining per host and whitelisting known backup jobs
+
+RESPONSE:
+- Identify the destination IP and check against threat intel
+- Determine what data the source host has access to
+- Review what files were accessed or compressed before transfer
+- Check if transfer occurred during or outside business hours
+- Capture and preserve network traffic for forensic analysis
+- If destination confirmed malicious — isolate source host immediately
+*/}
+
+index=network sourcetype="firewall_logs" OR sourcetype="proxy_logs"
+direction=outbound
+| eval bytes_out_mb = bytes_out / 1024 / 1024
+| bucket _time span=1h
+| stats
+    sum(bytes_out_mb) AS total_mb_transferred,
+    values(dest_ip) AS destination_ips,
+    values(dest_port) AS destination_ports,
+    values(app) AS applications,
+    dc(dest_ip) AS unique_destinations,
+    count AS connection_count,
+    first(_time) AS window_start,
+    last(_time) AS window_end
+    BY _time, src_ip, src_host
+| where total_mb_transferred >= 500
+| eval severity=case(
+    total_mb_transferred >= 2000, "CRITICAL",
+    total_mb_transferred >= 1000, "HIGH",
+    total_mb_transferred >= 500,  "MEDIUM"
+)
+| eval mitre_technique="T1048 / T1041 - Exfiltration"
+| eval tactic="Exfiltration"
+| eval investigation_priority=case(
+    unique_destinations == 1 AND total_mb_transferred >= 1000,
+        "PRIORITY 1 — Large transfer to single destination",
+    unique_destinations <= 3 AND total_mb_transferred >= 500,
+        "PRIORITY 2 — Large transfer to few destinations",
+    true(),
+        "PRIORITY 3 — Review required"
+)
+| table
+    _time,
+    src_host,
+    src_ip,
+    total_mb_transferred,
+    destination_ips,
+    destination_ports,
+    applications,
+    unique_destinations,
+    connection_count,
+    window_start,
+    window_end,
+    severity,
+    investigation_priority,
+    mitre_technique,
+    tactic
+| sort - total_mb_transferred

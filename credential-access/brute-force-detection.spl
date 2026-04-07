@@ -1,0 +1,48 @@
+{/*
+DETECTION RULE: Brute Force Login Attack
+MITRE ATT&CK: T1110 - Brute Force
+TACTIC: Credential Access (TA0006)
+PLATFORM: Windows (Security Event Logs)
+SEVERITY: High
+
+DESCRIPTION:
+Detects a high volume of failed login attempts (Event ID 4625)
+from a single source account within a 5-minute window.
+Threshold of 10 failures is tuned to reduce false positives
+from users who genuinely mistype passwords while catching
+automated brute force tools which typically attempt
+hundreds of logins per minute.
+
+RESPONSE:
+- Identify the source IP and account name
+- Check if source IP is internal or external
+- Review successful logins from same source around same time
+- If external: block source IP at perimeter firewall
+- If internal: isolate endpoint and investigate for compromise
+- Notify account owner and reset credentials
+*/}
+
+index=windows sourcetype="WinEventLog:Security"
+EventCode=4625
+| bucket _time span=5m
+| stats
+    count AS failed_attempts,
+    values(src_ip) AS source_ips,
+    values(dest) AS targeted_hosts,
+    first(_time) AS first_attempt,
+    last(_time) AS last_attempt
+    BY _time, Account_Name
+| where failed_attempts >= 10
+| eval severity="HIGH"
+| eval mitre_technique="T1110 - Brute Force"
+| eval tactic="Credential Access"
+| table
+    _time,
+    Account_Name,
+    failed_attempts,
+    source_ips,
+    targeted_hosts,
+    severity,
+    mitre_technique,
+    tactic
+| sort - failed_attempts
