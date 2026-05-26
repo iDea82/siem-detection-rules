@@ -1,0 +1,28 @@
+title: Brute Force — Successful Login After Failures
+id: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+status: stable
+description: Detects successful authentication following multiple failed attempts
+references:
+    - https://attack.mitre.org/techniques/T1110/
+author: Adesina Tijani
+date: 2026/05/25
+tags:
+    - attack.credential_access
+    - attack.t1110
+logsource:
+    product: windows
+    service: security
+detection:
+    failures:
+        EventID: 4625
+    success:
+        EventID: 4624
+    condition: failures | count() by TargetUserName > 3 and success
+falsepositives:
+    - Service accounts with cached credentials
+    - Users after password reset
+fields:
+    - TargetUserName
+    - IpAddress
+    - LogonType
+level: high

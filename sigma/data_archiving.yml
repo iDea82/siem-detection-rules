@@ -1,0 +1,36 @@
+title: Data Archiving in Sensitive Directory — Possible Exfil Staging
+id: c3d4e5f6-a7b8-9012-cdef-123456789012
+status: stable
+description: Detects compression utilities running against sensitive user directories — indicator of pre-exfiltration staging
+references:
+    - https://attack.mitre.org/techniques/T1560/
+author: Adesina Tijani
+date: 2026/05/25
+tags:
+    - attack.collection
+    - attack.t1560
+logsource:
+    product: windows
+    service: security
+detection:
+    selection:
+        EventID: 4688
+        NewProcessName|contains:
+            - '7z.exe'
+            - 'winrar.exe'
+            - 'rar.exe'
+            - 'zip.exe'
+        CommandLine|contains:
+            - 'documents'
+            - 'desktop'
+            - 'appdata'
+            - 'programdata'
+    condition: selection
+falsepositives:
+    - Legitimate backup operations
+    - IT administrative archiving
+fields:
+    - SubjectUserName
+    - NewProcessName
+    - CommandLine
+level: high
