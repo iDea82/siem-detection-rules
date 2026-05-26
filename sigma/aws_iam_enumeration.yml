@@ -1,0 +1,32 @@
+title: AWS IAM Enumeration — Possible Credential Theft
+id: d4e5f6a7-b8c9-0123-defa-234567890123
+status: stable
+description: Detects rapid IAM enumeration following possible credential theft
+references:
+    - https://attack.mitre.org/techniques/T1078/004/
+author: Adesina Tijani
+date: 2026/05/25
+tags:
+    - attack.discovery
+    - attack.t1078.004
+    - attack.t1087.004
+logsource:
+    product: aws
+    service: cloudtrail
+detection:
+    selection:
+        eventName:
+            - GetUser
+            - ListUsers
+            - ListAttachedUserPolicies
+            - ListRoles
+            - GetCallerIdentity
+    condition: selection | count() by userIdentity.userName > 3
+falsepositives:
+    - Legitimate IAM auditing tools
+    - New administrator onboarding
+fields:
+    - userIdentity.userName
+    - sourceIPAddress
+    - eventName
+level: high
